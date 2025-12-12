@@ -206,6 +206,7 @@
                         <span id="upscaled-dims" class="text-xs bg-blue-900/50 border border-blue-500/30 px-2 py-1 rounded text-blue-300 font-mono">--- x ---</span>
                     </div>
                     <div class="p-4 flex-grow flex items-center justify-center bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] bg-slate-900/30 relative image-container">
+                        <!-- Reverted to simple IMG tag for stability -->
                         <img id="upscaled-preview" src="" alt="Upscaled" class="rounded shadow-lg border-2 border-transparent">
                         <div id="scan-effect" class="absolute inset-0 pointer-events-none hidden">
                             <div class="scan-line"></div>
@@ -251,6 +252,7 @@
         const resultSection = document.getElementById('result-section');
         const progressBar = document.getElementById('progress-bar');
         const statusText = document.getElementById('status-text');
+        
         const originalPreview = document.getElementById('original-preview');
         const upscaledPreview = document.getElementById('upscaled-preview');
         const originalDims = document.getElementById('original-dims');
@@ -263,23 +265,20 @@
         let deferredPrompt;
         let isServiceWorkerActive = false;
 
-        // --- Service Worker Registration (Modified for Production) ---
+        // --- Service Worker Registration ---
         if ('serviceWorker' in navigator) {
-            // Register sw.js directly
             navigator.serviceWorker.register('./sw.js')
                 .then(reg => {
                     console.log('Service Worker registered!', reg);
-                    // Check if SW is already controlling
                     if (reg.active || navigator.serviceWorker.controller) {
                         isServiceWorkerActive = true;
                         document.getElementById('offline-mode-ready').classList.remove('hidden');
                     }
                 })
                 .catch(err => {
-                    console.warn('SW registration failed (Maybe running locally without https?):', err);
+                    console.warn('SW registration failed:', err);
                 });
             
-            // Listen for controller change (when SW takes over)
             navigator.serviceWorker.addEventListener('controllerchange', () => {
                 isServiceWorkerActive = true;
                 document.getElementById('offline-mode-ready').classList.remove('hidden');
@@ -315,7 +314,6 @@
 
         // --- Image Processing ---
         triggerInput.addEventListener('click', () => {
-            // If offline and SW is not ready, warn user
             if (!navigator.onLine && !isServiceWorkerActive && !upscaler) {
                 alert("您目前處於離線狀態，且 Service Worker 尚未啟用。\n\n請先連接網路載入頁面一次，以便 App 下載必要資源。");
             }
@@ -349,12 +347,27 @@
                     alert('請上傳圖片檔案 (JPG, PNG)');
                     return;
                 }
+                
+                // [Size Warning] Reinstated 2MB warning
+                const SIZE_LIMIT = 2 * 1024 * 1024; // 2MB
+                if (file.size > SIZE_LIMIT) { 
+                    const confirmLarge = confirm(
+                        "⚠️ 圖片檔案過大提醒\n\n" +
+                        "您上傳的圖片超過 2MB。\n" +
+                        "在手機或平板上處理大尺寸圖片可能會因為記憶體不足而導致 App 閃退。\n\n" +
+                        "是否仍要繼續處理？"
+                    );
+                    if (!confirmLarge) {
+                        fileInput.value = '';
+                        return;
+                    }
+                }
+                
                 processImage(file);
             }
         }
 
         async function processImage(file) {
-            // Check dependency
             if (typeof tf === 'undefined' && !Upscaler) {
                  alert("核心組件載入失敗。請檢查網路或確認 sw.js 已正確部署。");
                  return;
@@ -385,6 +398,9 @@
                 progressBar.style.width = "40%";
 
                 const startTime = performance.now();
+                
+                // Reverted to default execute (returns base64 string)
+                // This is safer than tf.browser.toPixels for cross-device compatibility
                 const upscaledImgSrc = await upscaler.execute(originalPreview, {
                     patchSize: 64,
                     padding: 2,
@@ -395,19 +411,20 @@
                         statusText.innerText = `處理中... ${percent}%`;
                     }
                 });
+
                 const endTime = performance.now();
                 console.log(`Time: ${(endTime - startTime).toFixed(2)}ms`);
 
                 progressBar.style.width = "100%";
                 statusText.innerText = "完成！";
+                
                 showResult(upscaledImgSrc);
 
             } catch (err) {
                 console.error(err);
                 let msg = err.message || "未知錯誤";
-                if(msg.includes('fetch') || msg.includes('network')) {
-                    msg = "模型下載失敗。若已離線，請確認 sw.js 是否有正確快取資源。";
-                }
+                if(msg.includes('fetch')) msg = "模型下載失敗。若已離線，請確認 sw.js 是否有正確快取資源。";
+                else if (msg.includes('memory') || msg.includes('GL')) msg = "記憶體不足，請嘗試較小的圖片。";
                 alert(`處理失敗: ${msg}`);
                 window.resetApp();
             }
@@ -417,11 +434,14 @@
             setTimeout(() => {
                 progressSection.classList.add('hidden');
                 resultSection.classList.remove('hidden');
+                
                 upscaledPreview.src = src;
                 downloadBtn.href = src;
+                
                 upscaledPreview.onload = () => {
                     upscaledDims.textContent = `${upscaledPreview.naturalWidth} x ${upscaledPreview.naturalHeight}`;
                 };
+
             }, 500);
         }
 
@@ -436,7 +456,7 @@
             upscaledPreview.src = "";
         };
         
-        console.log("App initialized.");
+        console.log("App initialized (Stable Version)");
     </script>
 </body>
 </html>
