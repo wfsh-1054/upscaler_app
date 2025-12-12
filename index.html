@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 智能圖像放大器 (UpscalerJS)</title>
+    
+    <!-- PWA Meta Tags -->
+    <meta name="theme-color" content="#1e293b">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="AI Upscaler">
+    
+    <!-- PWA Manifest (Embedded as Data URI) -->
+    <link rel="manifest" id="manifest-placeholder">
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- TensorFlow.js -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&display=swap" rel="stylesheet">
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        body {
+            font-family: 'Noto Sans TC', sans-serif;
+            background-color: #0f172a; /* Slate 900 */
+            color: #f8fafc;
+        }
+        .drop-zone {
+            transition: all 0.3s ease;
+            background-image: url("data:image/svg+xml,%3csvg width='100%25' height='100%25' xmlns='http://www.w3.org/2000/svg'%3e%3crect width='100%25' height='100%25' fill='none' rx='16' ry='16' stroke='%233B82F6FF' stroke-width='2' stroke-dasharray='12%2c 12' stroke-dashoffset='0' stroke-linecap='square'/%3e%3c/svg%3e");
+        }
+        .drop-zone:hover, .drop-zone.dragover {
+            background-color: rgba(59, 130, 246, 0.1);
+            transform: scale(1.01);
+        }
+        /* Loading Animation */
+        .scan-line {
+            width: 100%;
+            height: 4px;
+            background: #3b82f6;
+            box-shadow: 0 0 10px #3b82f6;
+            animation: scan 2s linear infinite;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 10;
+        }
+        @keyframes scan {
+            0% { top: 0%; opacity: 0; }
+            10% { opacity: 1; }
+            90% { opacity: 1; }
+            100% { top: 100%; opacity: 0; }
+        }
+        .image-container img {
+            max-height: 400px;
+            width: auto;
+            object-fit: contain;
+        }
+        /* Offline Banner Animation */
+        #offline-banner {
+            transition: transform 0.3s ease-in-out;
+        }
+        #offline-banner.hidden-banner {
+            transform: translateY(-100%);
+        }
+    </style>
+
+    <!-- Inject Manifest Script -->
+    <script>
+        const manifest = {
+            "name": "AI 圖像放大器",
+            "short_name": "AI Upscaler",
+            "start_url": ".",
+            "display": "standalone",
+            "background_color": "#0f172a",
+            "theme_color": "#1e293b",
+            "description": "使用 AI 本地端放大圖片解析度",
+            "icons": [
+                {
+                    "src": "https://cdn-icons-png.flaticon.com/512/10473/10473609.png", 
+                    "sizes": "192x192",
+                    "type": "image/png"
+                },
+                {
+                    "src": "https://cdn-icons-png.flaticon.com/512/10473/10473609.png",
+                    "sizes": "512x512",
+                    "type": "image/png"
+                }
+            ]
+        };
+        const stringManifest = JSON.stringify(manifest);
+        const blob = new Blob([stringManifest], {type: 'application/json'});
+        const manifestURL = URL.createObjectURL(blob);
+        document.querySelector('#manifest-placeholder').setAttribute('href', manifestURL);
+    </script>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <!-- Offline Banner -->
+    <div id="offline-banner" class="fixed top-0 left-0 right-0 bg-red-600 text-white text-center py-2 z-[60] text-sm font-medium hidden-banner shadow-md">
+        <span class="flex items-center justify-center gap-2">
+            <i data-lucide="wifi-off" class="w-4 h-4"></i>
+            網路已中斷。
+            <span id="offline-mode-ready" class="hidden font-normal text-white/80">(離線功能正常運作中)</span>
+        </span>
+    </div>
+
+    <!-- Navbar -->
+    <nav class="bg-slate-800 border-b border-slate-700 shadow-lg sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <div class="flex items-center gap-2">
+                    <i data-lucide="zap" class="text-blue-500 w-6 h-6"></i>
+                    <span class="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-500">
+                        AI 圖像放大器
+                    </span>
+                </div>
+                
+                <div class="flex items-center gap-4">
+                    <!-- Install PWA Button (Hidden by default) -->
+                    <button id="install-btn" class="hidden flex items-center gap-2 bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded-lg text-sm transition-colors border border-slate-600">
+                        <i data-lucide="download" class="w-4 h-4"></i>
+                        <span>安裝 App</span>
+                    </button>
+                    
+                    <div class="text-sm text-slate-400 hidden sm:block border-l border-slate-600 pl-4">
+                        Powered by UpscalerJS
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="flex-grow container mx-auto px-4 py-8">
+        
+        <!-- Intro Section -->
+        <div class="text-center mb-10">
+            <h1 class="text-3xl sm:text-4xl font-bold mb-4 text-white">提升您的圖片畫質</h1>
+            <p class="text-slate-400 max-w-2xl mx-auto">
+                直接在瀏覽器中使用 AI 技術將圖片解析度放大 2 倍。
+                <br>
+                <span class="text-xs bg-slate-800 px-2 py-1 rounded text-yellow-500 border border-yellow-700/30 mt-2 inline-block">
+                    注意：運算過程完全在本地端執行，保護您的隱私。
+                </span>
+            </p>
+        </div>
+
+        <!-- Upload Section -->
+        <div id="upload-section" class="max-w-3xl mx-auto mb-12">
+            <div class="relative group cursor-pointer" id="triggerInput">
+                <div class="drop-zone bg-slate-800/50 rounded-2xl p-12 text-center h-64 flex flex-col justify-center items-center" id="dropArea">
+                    <input type="file" id="fileInput" class="hidden" accept="image/*">
+                    <div class="bg-blue-500/20 p-4 rounded-full mb-4 group-hover:bg-blue-500/30 transition-colors">
+                        <i data-lucide="upload-cloud" class="w-10 h-10 text-blue-400"></i>
+                    </div>
+                    <h3 class="text-lg font-semibold text-white mb-1">點擊或拖放圖片至此</h3>
+                    <p class="text-slate-400 text-sm">支援 JPG, PNG (建議小於 2MB)</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Progress Section -->
+        <div id="progress-section" class="hidden max-w-3xl mx-auto mb-12 text-center">
+            <div class="bg-slate-800 rounded-xl p-8 border border-slate-700 shadow-xl relative overflow-hidden">
+                <div class="flex flex-col items-center justify-center">
+                    <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mb-4"></div>
+                    <h3 class="text-xl font-bold text-white mb-2">AI 正在處理中...</h3>
+                    <p id="status-text" class="text-slate-400 animate-pulse">正在載入模型...</p>
+                    <div class="mt-4 w-full bg-slate-700 rounded-full h-2.5 max-w-md">
+                        <div id="progress-bar" class="bg-blue-500 h-2.5 rounded-full" style="width: 5%"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Result Section -->
+        <div id="result-section" class="hidden max-w-6xl mx-auto">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- Original Image -->
+                <div class="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden flex flex-col shadow-lg">
+                    <div class="bg-slate-900/50 p-3 border-b border-slate-700 flex justify-between items-center">
+                        <span class="font-semibold text-slate-300 flex items-center gap-2">
+                            <i data-lucide="image" class="w-4 h-4"></i> 原始圖片
+                        </span>
+                        <span id="original-dims" class="text-xs bg-slate-700 px-2 py-1 rounded text-slate-300 font-mono">--- x ---</span>
+                    </div>
+                    <div class="p-4 flex-grow flex items-center justify-center bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] bg-slate-900/30 relative image-container">
+                        <img id="original-preview" src="" alt="Original" class="rounded shadow-sm">
+                    </div>
+                </div>
+
+                <!-- Upscaled Image -->
+                <div class="bg-slate-800 rounded-xl border border-blue-500/30 overflow-hidden flex flex-col shadow-lg relative">
+                    <div class="bg-gradient-to-r from-blue-900/40 to-slate-900/40 p-3 border-b border-blue-500/20 flex justify-between items-center">
+                        <span class="font-semibold text-blue-300 flex items-center gap-2">
+                            <i data-lucide="sparkles" class="w-4 h-4"></i> AI 放大後 (2x)
+                        </span>
+                        <span id="upscaled-dims" class="text-xs bg-blue-900/50 border border-blue-500/30 px-2 py-1 rounded text-blue-300 font-mono">--- x ---</span>
+                    </div>
+                    <div class="p-4 flex-grow flex items-center justify-center bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] bg-slate-900/30 relative image-container">
+                        <img id="upscaled-preview" src="" alt="Upscaled" class="rounded shadow-lg border-2 border-transparent">
+                        <div id="scan-effect" class="absolute inset-0 pointer-events-none hidden">
+                            <div class="scan-line"></div>
+                        </div>
+                    </div>
+                    <div class="p-4 bg-slate-900/50 border-t border-slate-700 text-center">
+                        <a id="download-btn" href="#" download="upscaled_image.png" class="inline-flex items-center justify-center gap-2 w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-6 rounded-lg transition-all duration-200 shadow-lg shadow-blue-500/20">
+                            <i data-lucide="download" class="w-5 h-5"></i> 下載高畫質圖片
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            <div class="text-center mt-8">
+                <button onclick="window.resetApp()" class="text-slate-400 hover:text-white underline decoration-slate-600 hover:decoration-white underline-offset-4 transition-colors">
+                    處理另一張圖片
+                </button>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-slate-900 border-t border-slate-800 mt-12 py-8">
+        <div class="container mx-auto px-4 text-center text-slate-500 text-sm">
+            <p>本工具在您的瀏覽器本地運行。</p>
+            <p class="mt-2">&copy; 2024 AI Upscaler Web Service.</p>
+        </div>
+    </footer>
+
+    <!-- Logic -->
+    <script type="module">
+        import Upscaler from 'https://cdn.jsdelivr.net/npm/upscaler@latest/+esm';
+        import defaultModel from 'https://cdn.jsdelivr.net/npm/@upscalerjs/default-model@latest/+esm';
+        
+        // --- App Initialization ---
+        lucide.createIcons();
+        const fileInput = document.getElementById('fileInput');
+        const triggerInput = document.getElementById('triggerInput');
+        const dropArea = document.getElementById('dropArea');
+        const uploadSection = document.getElementById('upload-section');
+        const progressSection = document.getElementById('progress-section');
+        const resultSection = document.getElementById('result-section');
+        const progressBar = document.getElementById('progress-bar');
+        const statusText = document.getElementById('status-text');
+        const originalPreview = document.getElementById('original-preview');
+        const upscaledPreview = document.getElementById('upscaled-preview');
+        const originalDims = document.getElementById('original-dims');
+        const upscaledDims = document.getElementById('upscaled-dims');
+        const downloadBtn = document.getElementById('download-btn');
+        const installBtn = document.getElementById('install-btn');
+        const offlineBanner = document.getElementById('offline-banner');
+
+        let upscaler;
+        let deferredPrompt;
+        let isServiceWorkerActive = false;
+
+        // --- Service Worker Registration (Modified for Production) ---
+        if ('serviceWorker' in navigator) {
+            // Register sw.js directly
+            navigator.serviceWorker.register('./sw.js')
+                .then(reg => {
+                    console.log('Service Worker registered!', reg);
+                    // Check if SW is already controlling
+                    if (reg.active || navigator.serviceWorker.controller) {
+                        isServiceWorkerActive = true;
+                        document.getElementById('offline-mode-ready').classList.remove('hidden');
+                    }
+                })
+                .catch(err => {
+                    console.warn('SW registration failed (Maybe running locally without https?):', err);
+                });
+            
+            // Listen for controller change (when SW takes over)
+            navigator.serviceWorker.addEventListener('controllerchange', () => {
+                isServiceWorkerActive = true;
+                document.getElementById('offline-mode-ready').classList.remove('hidden');
+            });
+        }
+
+        // --- Network Status ---
+        function updateOnlineStatus() {
+            if (navigator.onLine) {
+                offlineBanner.classList.add('hidden-banner');
+            } else {
+                offlineBanner.classList.remove('hidden-banner');
+            }
+        }
+        window.addEventListener('online', updateOnlineStatus);
+        window.addEventListener('offline', updateOnlineStatus);
+        updateOnlineStatus();
+
+        // --- PWA Install ---
+        window.addEventListener('beforeinstallprompt', (e) => {
+            e.preventDefault();
+            deferredPrompt = e;
+            installBtn.classList.remove('hidden');
+        });
+
+        installBtn.addEventListener('click', async () => {
+            if (!deferredPrompt) return;
+            deferredPrompt.prompt();
+            const { outcome } = await deferredPrompt.userChoice;
+            deferredPrompt = null;
+            installBtn.classList.add('hidden');
+        });
+
+        // --- Image Processing ---
+        triggerInput.addEventListener('click', () => {
+            // If offline and SW is not ready, warn user
+            if (!navigator.onLine && !isServiceWorkerActive && !upscaler) {
+                alert("您目前處於離線狀態，且 Service Worker 尚未啟用。\n\n請先連接網路載入頁面一次，以便 App 下載必要資源。");
+            }
+            fileInput.click();
+        });
+
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropArea.addEventListener(eventName, (e) => { e.preventDefault(); e.stopPropagation(); }, false);
+        });
+        
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropArea.addEventListener(eventName, () => dropArea.classList.add('dragover'), false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropArea.addEventListener(eventName, () => dropArea.classList.remove('dragover'), false);
+        });
+
+        dropArea.addEventListener('drop', (e) => {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            handleFiles(files);
+        }, false);
+
+        fileInput.addEventListener('change', function() { handleFiles(this.files); });
+
+        function handleFiles(files) {
+            if (files.length > 0) {
+                const file = files[0];
+                if (!file.type.startsWith('image/')) {
+                    alert('請上傳圖片檔案 (JPG, PNG)');
+                    return;
+                }
+                processImage(file);
+            }
+        }
+
+        async function processImage(file) {
+            // Check dependency
+            if (typeof tf === 'undefined' && !Upscaler) {
+                 alert("核心組件載入失敗。請檢查網路或確認 sw.js 已正確部署。");
+                 return;
+            }
+
+            uploadSection.classList.add('hidden');
+            progressSection.classList.remove('hidden');
+            resultSection.classList.add('hidden');
+            
+            const imgUrl = URL.createObjectURL(file);
+            originalPreview.src = imgUrl;
+
+            await new Promise((resolve) => {
+                originalPreview.onload = () => {
+                    originalDims.textContent = `${originalPreview.naturalWidth} x ${originalPreview.naturalHeight}`;
+                    resolve();
+                }
+            });
+
+            try {
+                if (!upscaler) {
+                    statusText.innerText = "正在載入 AI 模型...";
+                    progressBar.style.width = "20%";
+                    upscaler = new Upscaler({ model: defaultModel });
+                }
+
+                statusText.innerText = "正在進行 2x 放大運算...";
+                progressBar.style.width = "40%";
+
+                const startTime = performance.now();
+                const upscaledImgSrc = await upscaler.execute(originalPreview, {
+                    patchSize: 64,
+                    padding: 2,
+                    progress: (amount) => {
+                        const percent = Math.round(amount * 100);
+                        const barWidth = 40 + (percent * 0.6); 
+                        progressBar.style.width = `${barWidth}%`;
+                        statusText.innerText = `處理中... ${percent}%`;
+                    }
+                });
+                const endTime = performance.now();
+                console.log(`Time: ${(endTime - startTime).toFixed(2)}ms`);
+
+                progressBar.style.width = "100%";
+                statusText.innerText = "完成！";
+                showResult(upscaledImgSrc);
+
+            } catch (err) {
+                console.error(err);
+                let msg = err.message || "未知錯誤";
+                if(msg.includes('fetch') || msg.includes('network')) {
+                    msg = "模型下載失敗。若已離線，請確認 sw.js 是否有正確快取資源。";
+                }
+                alert(`處理失敗: ${msg}`);
+                window.resetApp();
+            }
+        }
+
+        function showResult(src) {
+            setTimeout(() => {
+                progressSection.classList.add('hidden');
+                resultSection.classList.remove('hidden');
+                upscaledPreview.src = src;
+                downloadBtn.href = src;
+                upscaledPreview.onload = () => {
+                    upscaledDims.textContent = `${upscaledPreview.naturalWidth} x ${upscaledPreview.naturalHeight}`;
+                };
+            }, 500);
+        }
+
+        window.resetApp = function() {
+            uploadSection.classList.remove('hidden');
+            progressSection.classList.add('hidden');
+            resultSection.classList.add('hidden');
+            fileInput.value = '';
+            progressBar.style.width = "0%";
+            if (originalPreview.src) URL.revokeObjectURL(originalPreview.src);
+            originalPreview.src = "";
+            upscaledPreview.src = "";
+        };
+        
+        console.log("App initialized.");
+    </script>
+</body>
+</html>
