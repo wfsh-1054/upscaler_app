@@ -58,11 +58,10 @@
             90% { opacity: 1; }
             100% { top: 100%; opacity: 0; }
         }
-        .image-container img, .image-container canvas {
+        .image-container img {
             max-height: 400px;
             width: auto;
             object-fit: contain;
-            max-width: 100%;
         }
         /* Offline Banner Animation */
         #offline-banner {
@@ -149,7 +148,7 @@
                 直接在瀏覽器中使用 AI 技術將圖片解析度放大 2 倍。
                 <br>
                 <span class="text-xs bg-slate-800 px-2 py-1 rounded text-yellow-500 border border-yellow-700/30 mt-2 inline-block">
-                    Safari 優化版：解決 iPad/iPhone 記憶體崩潰問題
+                    注意：運算過程完全在本地端執行，保護您的隱私。
                 </span>
             </p>
         </div>
@@ -198,7 +197,7 @@
                     </div>
                 </div>
 
-                <!-- Upscaled Image (Now using Canvas) -->
+                <!-- Upscaled Image -->
                 <div class="bg-slate-800 rounded-xl border border-blue-500/30 overflow-hidden flex flex-col shadow-lg relative">
                     <div class="bg-gradient-to-r from-blue-900/40 to-slate-900/40 p-3 border-b border-blue-500/20 flex justify-between items-center">
                         <span class="font-semibold text-blue-300 flex items-center gap-2">
@@ -207,18 +206,15 @@
                         <span id="upscaled-dims" class="text-xs bg-blue-900/50 border border-blue-500/30 px-2 py-1 rounded text-blue-300 font-mono">--- x ---</span>
                     </div>
                     <div class="p-4 flex-grow flex items-center justify-center bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] bg-slate-900/30 relative image-container">
-                        <!-- CHANGED: Use Canvas instead of IMG for memory efficiency on Safari -->
-                        <canvas id="upscaled-canvas" class="rounded shadow-lg border-2 border-transparent"></canvas>
-                        
+                        <img id="upscaled-preview" src="" alt="Upscaled" class="rounded shadow-lg border-2 border-transparent">
                         <div id="scan-effect" class="absolute inset-0 pointer-events-none hidden">
                             <div class="scan-line"></div>
                         </div>
                     </div>
                     <div class="p-4 bg-slate-900/50 border-t border-slate-700 text-center">
-                        <!-- Download button now calls a function -->
-                        <button id="download-btn" class="inline-flex items-center justify-center gap-2 w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-6 rounded-lg transition-all duration-200 shadow-lg shadow-blue-500/20">
+                        <a id="download-btn" href="#" download="upscaled_image.png" class="inline-flex items-center justify-center gap-2 w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-6 rounded-lg transition-all duration-200 shadow-lg shadow-blue-500/20">
                             <i data-lucide="download" class="w-5 h-5"></i> 下載高畫質圖片
-                        </button>
+                        </a>
                     </div>
                 </div>
             </div>
@@ -255,11 +251,8 @@
         const resultSection = document.getElementById('result-section');
         const progressBar = document.getElementById('progress-bar');
         const statusText = document.getElementById('status-text');
-        
         const originalPreview = document.getElementById('original-preview');
-        // CHANGED: Get canvas element
-        const upscaledCanvas = document.getElementById('upscaled-canvas');
-        
+        const upscaledPreview = document.getElementById('upscaled-preview');
         const originalDims = document.getElementById('original-dims');
         const upscaledDims = document.getElementById('upscaled-dims');
         const downloadBtn = document.getElementById('download-btn');
@@ -270,20 +263,23 @@
         let deferredPrompt;
         let isServiceWorkerActive = false;
 
-        // --- Service Worker Registration ---
+        // --- Service Worker Registration (Modified for Production) ---
         if ('serviceWorker' in navigator) {
+            // Register sw.js directly
             navigator.serviceWorker.register('./sw.js')
                 .then(reg => {
                     console.log('Service Worker registered!', reg);
+                    // Check if SW is already controlling
                     if (reg.active || navigator.serviceWorker.controller) {
                         isServiceWorkerActive = true;
                         document.getElementById('offline-mode-ready').classList.remove('hidden');
                     }
                 })
                 .catch(err => {
-                    console.warn('SW registration failed:', err);
+                    console.warn('SW registration failed (Maybe running locally without https?):', err);
                 });
             
+            // Listen for controller change (when SW takes over)
             navigator.serviceWorker.addEventListener('controllerchange', () => {
                 isServiceWorkerActive = true;
                 document.getElementById('offline-mode-ready').classList.remove('hidden');
@@ -319,6 +315,7 @@
 
         // --- Image Processing ---
         triggerInput.addEventListener('click', () => {
+            // If offline and SW is not ready, warn user
             if (!navigator.onLine && !isServiceWorkerActive && !upscaler) {
                 alert("您目前處於離線狀態，且 Service Worker 尚未啟用。\n\n請先連接網路載入頁面一次，以便 App 下載必要資源。");
             }
@@ -357,15 +354,12 @@
         }
 
         async function processImage(file) {
+            // Check dependency
             if (typeof tf === 'undefined' && !Upscaler) {
                  alert("核心組件載入失敗。請檢查網路或確認 sw.js 已正確部署。");
                  return;
             }
 
-            // Memory Safety Check for iOS
-            // 4K image = 4096*4096*4 = 64MB raw. 
-            // In browser logic, this can spike to >500MB easily.
-            
             uploadSection.classList.add('hidden');
             progressSection.classList.remove('hidden');
             resultSection.classList.add('hidden');
@@ -380,15 +374,6 @@
                 }
             });
 
-            // iOS Safety Warning
-            if (originalPreview.naturalWidth > 2000 || originalPreview.naturalHeight > 2000) {
-                const proceed = confirm("警告：您的圖片較大 (>2000px)。\n\n在 iPhone/iPad 上進行 2x 放大可能會因為記憶體限制而導致閃退。\n\n是否繼續？");
-                if (!proceed) {
-                    window.resetApp();
-                    return;
-                }
-            }
-
             try {
                 if (!upscaler) {
                     statusText.innerText = "正在載入 AI 模型...";
@@ -400,12 +385,7 @@
                 progressBar.style.width = "40%";
 
                 const startTime = performance.now();
-                
-                // --- CRITICAL CHANGE FOR SAFARI STABILITY ---
-                // 1. Output as 'tensor' to avoid massive Base64 string allocation
-                // 2. Use patchSize 64 (standard)
-                const tensor = await upscaler.execute(originalPreview, {
-                    output: 'tensor', 
+                const upscaledImgSrc = await upscaler.execute(originalPreview, {
                     patchSize: 64,
                     padding: 2,
                     progress: (amount) => {
@@ -415,62 +395,33 @@
                         statusText.innerText = `處理中... ${percent}%`;
                     }
                 });
-
-                statusText.innerText = "正在繪製結果...";
-                
-                // Set Canvas Dimensions
-                upscaledCanvas.width = tensor.shape[1];
-                upscaledCanvas.height = tensor.shape[0];
-
-                // Render Tensor directly to Canvas (WebGL -> Canvas)
-                // This is much more memory efficient than toDataURL()
-                await tf.browser.toPixels(tensor, upscaledCanvas);
-                
-                // IMPORTANT: Dispose tensor immediately to free GPU memory
-                tensor.dispose();
-
                 const endTime = performance.now();
                 console.log(`Time: ${(endTime - startTime).toFixed(2)}ms`);
 
                 progressBar.style.width = "100%";
                 statusText.innerText = "完成！";
-                
-                showResult();
+                showResult(upscaledImgSrc);
 
             } catch (err) {
                 console.error(err);
                 let msg = err.message || "未知錯誤";
-                if(msg.includes('fetch')) msg = "模型下載失敗。若已離線，請確認 sw.js 是否有正確快取資源。";
-                else if (msg.includes('memory') || msg.includes('GL')) msg = "記憶體不足，請嘗試較小的圖片。";
+                if(msg.includes('fetch') || msg.includes('network')) {
+                    msg = "模型下載失敗。若已離線，請確認 sw.js 是否有正確快取資源。";
+                }
                 alert(`處理失敗: ${msg}`);
                 window.resetApp();
             }
         }
 
-        function showResult() {
+        function showResult(src) {
             setTimeout(() => {
                 progressSection.classList.add('hidden');
                 resultSection.classList.remove('hidden');
-                
-                // Display dimensions
-                upscaledDims.textContent = `${upscaledCanvas.width} x ${upscaledCanvas.height}`;
-                
-                // Setup Download Button (Lazy generation)
-                downloadBtn.onclick = () => {
-                    // Only generate blob when user actually clicks download
-                    // This avoids memory spike during the processing phase
-                    upscaledCanvas.toBlob((blob) => {
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = 'upscaled_image.png';
-                        document.body.appendChild(a);
-                        a.click();
-                        document.body.removeChild(a);
-                        URL.revokeObjectURL(url);
-                    }, 'image/png');
+                upscaledPreview.src = src;
+                downloadBtn.href = src;
+                upscaledPreview.onload = () => {
+                    upscaledDims.textContent = `${upscaledPreview.naturalWidth} x ${upscaledPreview.naturalHeight}`;
                 };
-
             }, 500);
         }
 
@@ -482,12 +433,7 @@
             progressBar.style.width = "0%";
             if (originalPreview.src) URL.revokeObjectURL(originalPreview.src);
             originalPreview.src = "";
-            
-            // Clear canvas
-            const ctx = upscaledCanvas.getContext('2d');
-            ctx.clearRect(0, 0, upscaledCanvas.width, upscaledCanvas.height);
-            upscaledCanvas.width = 0;
-            upscaledCanvas.height = 0;
+            upscaledPreview.src = "";
         };
         
         console.log("App initialized.");
